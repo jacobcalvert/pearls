@@ -3,21 +3,79 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  publish:
-    runs-on: ubuntu-latest
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runs_on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runs_on: ubuntu-latest
+            asset: pearls-x86_64-unknown-linux-musl.tar.gz
+          - target: x86_64-apple-darwin
+            runs_on: macos-13
+            asset: pearls-x86_64-apple-darwin.tar.gz
+          - target: aarch64-apple-darwin
+            runs_on: macos-14
+            asset: pearls-aarch64-apple-darwin.tar.gz
+          - target: x86_64-pc-windows-msvc
+            runs_on: windows-latest
+            asset: pearls-x86_64-pc-windows-msvc.zip
+
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
+          targets: ${{ matrix.target }}
 
-      - name: Publish to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          bin="target/${{ matrix.target }}/release/pearls"
+          strip "$bin" || true
+          tar -C "target/${{ matrix.target }}/release" -czf "${{ matrix.asset }}" "pearls"
+          shasum -a 256 "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bin = "target/${{ matrix.target }}/release/pearls.exe"
+          Compress-Archive -Path $bin -DestinationPath "${{ matrix.asset }}"
+          $hash = (Get-FileHash -Algorithm SHA256 "${{ matrix.asset }}").Hash.ToLower()
+          "$hash  ${{ matrix.asset }}" | Out-File -FilePath "${{ matrix.asset }}.sha256" -Encoding ascii
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: |
+            ${{ matrix.asset }}
+            ${{ matrix.asset }}.sha256
+
+      - name: Upload release assets
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ matrix.asset }}
+            ${{ matrix.asset }}.sha256
