@@ -21,8 +21,12 @@ async fn main() {
 
     match command {
         cli::Commands::Tasks(tasks) => match &tasks.command {
-            cli::TaskSubcommand::List { state } => {
-                match db::tasks::list_tasks(&conn, state).await {
+            cli::TaskSubcommand::List {
+                state,
+                offset,
+                limit,
+            } => {
+                match db::tasks::list_tasks_paginated(&conn, state, *offset, *limit).await {
                     Ok(rows) => {
                         if json_output {
                             print_json(&rows);

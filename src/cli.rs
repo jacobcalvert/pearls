@@ -66,6 +66,20 @@ pub enum TaskSubcommand {
             help = "Comma-separated states to include"
         )]
         state: Vec<TaskState>,
+        #[arg(
+            long,
+            value_name = "OFFSET",
+            default_value_t = 0,
+            help = "Number of tasks to skip before listing"
+        )]
+        offset: u64,
+        #[arg(
+            long,
+            value_name = "LIMIT",
+            default_value_t = 20,
+            help = "Maximum number of tasks to list"
+        )]
+        limit: u64,
     },
     /// Claim the highest-priority ready task and mark it in progress
     ClaimNext,

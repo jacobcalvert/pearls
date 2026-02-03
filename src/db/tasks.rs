@@ -162,6 +162,60 @@ pub async fn list_tasks(
     Ok(filtered)
 }
 
+pub async fn list_tasks_paginated(
+    conn: &DatabaseConnection,
+    states: &[TaskState],
+    offset: u64,
+    limit: u64,
+) -> Result<Vec<TaskRow>, DbErr> {
+    let mut query = Query::select();
+    query
+        .columns([
+            (Task::Table, Task::Id),
+            (Task::Table, Task::Title),
+            (Task::Table, Task::Desc),
+            (Task::Table, Task::Priority),
+            (Task::Table, Task::State),
+        ])
+        .from(Task::Table)
+        .offset(offset)
+        .limit(limit);
+
+    if !states.is_empty() {
+        let allowed: Vec<SimpleExpr> = states
+            .iter()
+            .map(|state| Expr::val(state.as_str()).into())
+            .collect();
+        query.and_where(Expr::col((Task::Table, Task::State)).is_in(allowed));
+    }
+
+    let (sql, values) = query.build(SqliteQueryBuilder);
+    let rows: Vec<QueryResult> = conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            sql,
+            values,
+        ))
+        .await?;
+
+    let mut tasks = Vec::with_capacity(rows.len());
+    for row in rows {
+        tasks.push(TaskRow {
+            id: row.try_get_by_index(0)?,
+            title: row.try_get_by_index(1)?,
+            desc: row.try_get_by_index(2)?,
+            priority: row.try_get_by_index(3)?,
+            state: row.try_get_by_index(4)?,
+            parents: Vec::new(),
+            children: Vec::new(),
+        });
+    }
+
+    let ids: Vec<i64> = tasks.iter().map(|task| task.id).collect();
+    populate_dependencies(conn, &ids, &mut tasks).await?;
+    Ok(tasks)
+}
+
 pub async fn claim_next(conn: &DatabaseConnection) -> Result<Option<TaskRow>, DbErr> {
     let mut ready = list_tasks(conn, &[TaskState::Ready]).await?;
     if ready.is_empty() {
