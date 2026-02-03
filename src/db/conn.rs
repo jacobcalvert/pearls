@@ -1,24 +1,18 @@
 use std::path::Path;
 
 use sea_orm_migration::MigratorTrait;
-use sea_orm_migration::sea_orm::{Database, DatabaseConnection};
+use sea_orm_migration::sea_orm::{Database, DatabaseConnection, DbErr};
 
 use crate::db::migration::Migrator;
 
-use eyre::Result;
-
-pub async fn connect(path: &Path) -> Result<DatabaseConnection> {
+pub async fn connect(path: &Path) -> Result<DatabaseConnection, DbErr> {
     if let Some(parent) = path.parent()
         && let Err(err) = std::fs::create_dir_all(parent)
     {
-        return Err(eyre::eyre!(
+        return Err(DbErr::Custom(format!(
             "failed to create db directory {}: {err}",
             parent.display()
-        ));
-    }
-
-    if !path.exists() {
-        std::fs::File::create(path)?;
+        )));
     }
 
     let url = format!("sqlite://{}", path.display());
