@@ -111,7 +111,7 @@ pub async fn get_task_by_id(conn: &DatabaseConnection, id: i64) -> Result<TaskRo
 
 pub async fn list_tasks(
     conn: &DatabaseConnection,
-    state: Option<TaskState>,
+    states: &[TaskState],
 ) -> Result<Vec<TaskRow>, DbErr> {
     let mut query = Query::select();
     query
@@ -123,10 +123,6 @@ pub async fn list_tasks(
             (Task::Table, Task::State),
         ])
         .from(Task::Table);
-
-    if let Some(state) = state {
-        query.and_where(Expr::col((Task::Table, Task::State)).eq(state.as_str()));
-    }
 
     let (sql, values) = query.build(SqliteQueryBuilder);
     let rows: Vec<QueryResult> = conn
@@ -152,7 +148,18 @@ pub async fn list_tasks(
 
     let ids: Vec<i64> = tasks.iter().map(|task| task.id).collect();
     populate_dependencies(conn, &ids, &mut tasks).await?;
-    Ok(tasks)
+
+    if states.is_empty() {
+        return Ok(tasks);
+    }
+
+    let allowed: HashSet<&'static str> = states.iter().map(TaskState::as_str).collect();
+    let filtered = tasks
+        .into_iter()
+        .filter(|task| allowed.contains(task.state.as_str()))
+        .collect();
+
+    Ok(filtered)
 }
 
 pub async fn update_metadata(
@@ -432,4 +439,71 @@ async fn fetch_task_states(
     }
 
     Ok(map)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::conn;
+
+    fn find_task(tasks: &[TaskRow], id: i64) -> &TaskRow {
+        tasks
+            .iter()
+            .find(|task| task.id == id)
+            .unwrap_or_else(|| panic!("missing task {id}"))
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn list_tasks_filters_states() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db_path = temp.path().join("pearls.db");
+        let conn = conn::connect(&db_path).await.expect("connect");
+
+        let t1 = add_task(&conn, "one", "first", None).await.expect("add t1");
+        let t2 = add_task(&conn, "two", "second", None)
+            .await
+            .expect("add t2");
+        update_metadata(&conn, t2.id, None, None, None, Some(TaskState::InProgress))
+            .await
+            .expect("update state");
+
+        let ready = list_tasks(&conn, &[TaskState::Ready])
+            .await
+            .expect("list ready");
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].id, t1.id);
+
+        let all = list_tasks(&conn, &[]).await.expect("list all");
+        assert_eq!(all.len(), 2);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dependency_blocks_child_until_parent_closed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db_path = temp.path().join("pearls.db");
+        let conn = conn::connect(&db_path).await.expect("connect");
+
+        let parent = add_task(&conn, "parent", "p", None)
+            .await
+            .expect("add parent");
+        let child = add_task(&conn, "child", "c", None)
+            .await
+            .expect("add child");
+
+        update_dependency(&conn, child.id, &[parent.id], &[], &[], &[])
+            .await
+            .expect("add dependency");
+
+        let tasks = list_tasks(&conn, &[]).await.expect("list");
+        let child_row = find_task(&tasks, child.id);
+        assert_eq!(child_row.state, "blocked");
+
+        update_metadata(&conn, parent.id, None, None, None, Some(TaskState::Closed))
+            .await
+            .expect("close parent");
+
+        let tasks = list_tasks(&conn, &[]).await.expect("list");
+        let child_row = find_task(&tasks, child.id);
+        assert_eq!(child_row.state, "ready");
+    }
 }

@@ -58,8 +58,14 @@ pub struct TasksCommand {
 pub enum TaskSubcommand {
     /// List all tasks matching a given filter (or all tasks by default)
     List {
-        #[arg(long, value_name = "STATE", help = "Optional state filter")]
-        state: Option<TaskState>,
+        #[arg(
+            long,
+            value_name = "STATES",
+            value_delimiter = ',',
+            default_value = "ready,blocked,in_progress",
+            help = "Comma-separated states to include"
+        )]
+        state: Vec<TaskState>,
     },
     /// List ready tasks
     Ready,

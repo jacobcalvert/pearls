@@ -15,7 +15,16 @@ pub async fn connect(path: &Path) -> Result<DatabaseConnection, DbErr> {
         )));
     }
 
-    let url = format!("sqlite://{}", path.display());
+    let mut url = if path.is_absolute() {
+        let path_str = path.display().to_string();
+        let trimmed = path_str.strip_prefix('/').unwrap_or(&path_str);
+        format!("sqlite:///{}", trimmed)
+    } else {
+        format!("sqlite://{}", path.display())
+    };
+    if !url.contains('?') {
+        url.push_str("?mode=rwc");
+    }
     let conn = Database::connect(&url).await?;
     Migrator::up(&conn, None).await?;
     Ok(conn)

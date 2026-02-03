@@ -22,7 +22,7 @@ async fn main() {
     match command {
         cli::Commands::Tasks(tasks) => match &tasks.command {
             cli::TaskSubcommand::List { state } => {
-                match db::tasks::list_tasks(&conn, *state).await {
+                match db::tasks::list_tasks(&conn, state).await {
                     Ok(rows) => {
                         if json_output {
                             print_json(&rows);
@@ -38,7 +38,8 @@ async fn main() {
                 }
             }
             cli::TaskSubcommand::Ready => {
-                match db::tasks::list_tasks(&conn, Some(cli::TaskState::Ready)).await {
+                let states = [cli::TaskState::Ready];
+                match db::tasks::list_tasks(&conn, &states).await {
                     Ok(rows) => {
                         if json_output {
                             print_json(&rows);
