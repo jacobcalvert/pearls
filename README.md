@@ -4,6 +4,30 @@ Pearls is a lightweight alternative to `beads` for managing long-running task gr
 
 It is designed for AI agents (especially coding agents) to organize and plan long-term work. It uses a SQLite database as the backing store and a flock-compatible file lock to prevent simultaneous write access by multiple operators. Output is human-readable by default, with an optional `--json` flag for every command to make it machine-friendly.
 
+## Installation
+
+### Install via Cargo
+
+```bash
+cargo install pearls
+```
+
+### Download a Release Binary
+
+1. Download the archive for your platform from the GitHub Releases page.
+2. Extract the archive.
+3. Make the binary executable (macOS/Linux only):
+
+```bash
+chmod +x pearls
+```
+
+4. Move it somewhere on your `PATH` (example):
+
+```bash
+mv pearls /usr/local/bin/pearls
+```
+
 ## Intended Use
 
 - Add the usage snippet to your `AGENTS.md` so your agent(s) know how to use Pearls.
