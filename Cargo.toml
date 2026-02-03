@@ -1,0 +1,11 @@
+[package]
+name = "pearls"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.5.32", features = ["derive", "env"] }
+eyre = "0.6.12"
+sea-orm-migration = { version = "1.1.10", features = ["runtime-tokio-rustls", "sqlx-sqlite"] }
+sea-query = { version = "0.32.0", features = ["backend-sqlite"] }
+tokio = { version = "1.36.0", features = ["macros", "rt-multi-thread"] }
