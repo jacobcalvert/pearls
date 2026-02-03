@@ -1,13 +1,13 @@
 [package]
 name = "pearls"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 edition = "2024"
-description = "A lightweight CLI for managing long-running task graphs."
+description = "A lightweight CLI for managing long-running task graphs for coding agents."
 readme = "README.md"
 license-file = "LICENSE"
 repository = "https://github.com/jacobcalvert/pearls"
 homepage = "https://github.com/jacobcalvert/pearls"
-keywords = ["cli", "tasks", "task-management", "sqlite", "workflow"]
+keywords = ["cli", "agent", "task-management", "llm", "workflow"]
 categories = ["command-line-utilities", "database"]
 
 [dependencies]
