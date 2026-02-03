@@ -21,10 +21,10 @@ jobs:
             runs_on: ubuntu-latest
             asset: pearls-x86_64-unknown-linux-musl.tar.gz
           - target: x86_64-apple-darwin
-            runs_on: macos-13
+            runs_on: macos-15-intel
             asset: pearls-x86_64-apple-darwin.tar.gz
           - target: aarch64-apple-darwin
-            runs_on: macos-14
+            runs_on: macos-15
             asset: pearls-aarch64-apple-darwin.tar.gz
           - target: x86_64-pc-windows-msvc
             runs_on: windows-latest
