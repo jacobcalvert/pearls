@@ -37,20 +37,32 @@ async fn main() {
                     }
                 }
             }
-            cli::TaskSubcommand::Ready => {
-                let states = [cli::TaskState::Ready];
-                match db::tasks::list_tasks(&conn, &states).await {
-                    Ok(rows) => {
+            cli::TaskSubcommand::ClaimNext => {
+                let _guard = match lock.lock() {
+                    Ok(guard) => guard,
+                    Err(err) => {
+                        eprintln!("{err}");
+                        return;
+                    }
+                };
+
+                match db::tasks::claim_next(&conn).await {
+                    Ok(Some(task)) => {
                         if json_output {
-                            print_json(&rows);
+                            print_json(&task);
                         } else {
-                            for row in rows {
-                                println!("{}", row.display_line());
-                            }
+                            println!("{}", task.display_line());
+                        }
+                    }
+                    Ok(None) => {
+                        if json_output {
+                            print_json(&json!({ "status": "no_ready_tasks" }));
+                        } else {
+                            println!("no ready tasks");
                         }
                     }
                     Err(err) => {
-                        eprintln!("failed to list ready tasks: {err}");
+                        eprintln!("failed to claim next task: {err}");
                     }
                 }
             }
@@ -77,28 +89,26 @@ async fn main() {
                     }
                 };
 
-                let mut add_parent = Vec::new();
-                let mut add_child = Vec::new();
-                if let Some(other) = *parent_of {
-                    add_parent.push(other as i64);
+                let mut dep_errors = Vec::new();
+                if let Some(other) = *parent_of
+                    && let Err(err) =
+                        db::tasks::add_dependency(&conn, task.id, other as i64).await
+                {
+                    dep_errors.push(err);
                 }
-                if let Some(other) = *child_of {
-                    add_child.push(other as i64);
+                if let Some(other) = *child_of
+                    && let Err(err) =
+                        db::tasks::add_dependency(&conn, other as i64, task.id).await
+                {
+                    dep_errors.push(err);
                 }
 
-                let has_deps = !add_parent.is_empty() || !add_child.is_empty();
-                if has_deps
-                    && let Err(err) = db::tasks::update_dependency(
-                        &conn,
-                        task.id,
-                        &add_parent,
-                        &[],
-                        &add_child,
-                        &[],
-                    )
-                    .await
-                {
-                    eprintln!("task added but failed to update dependencies: {err}");
+                let has_deps = parent_of.is_some() || child_of.is_some();
+                if !dep_errors.is_empty() {
+                    eprintln!("task added but failed to update dependencies");
+                    for err in dep_errors {
+                        eprintln!("  - {err}");
+                    }
                 }
 
                 if json_output {
@@ -165,8 +175,6 @@ async fn main() {
             }
             cli::TaskSubcommand::UpdateDependency {
                 id,
-                add_parent,
-                remove_parent,
                 add_child,
                 remove_child,
             } => {
@@ -178,16 +186,12 @@ async fn main() {
                     }
                 };
 
-                let add_parent: Vec<i64> = add_parent.iter().map(|v| *v as i64).collect();
-                let remove_parent: Vec<i64> = remove_parent.iter().map(|v| *v as i64).collect();
                 let add_child: Vec<i64> = add_child.iter().map(|v| *v as i64).collect();
                 let remove_child: Vec<i64> = remove_child.iter().map(|v| *v as i64).collect();
 
                 match db::tasks::update_dependency(
                     &conn,
                     *id as i64,
-                    &add_parent,
-                    &remove_parent,
                     &add_child,
                     &remove_child,
                 )

@@ -162,6 +162,20 @@ pub async fn list_tasks(
     Ok(filtered)
 }
 
+pub async fn claim_next(conn: &DatabaseConnection) -> Result<Option<TaskRow>, DbErr> {
+    let mut ready = list_tasks(conn, &[TaskState::Ready]).await?;
+    if ready.is_empty() {
+        return Ok(None);
+    }
+
+    ready.sort_by_key(|task| (task.priority, task.id));
+    let next_id = ready[0].id;
+
+    update_metadata(conn, next_id, None, None, None, Some(TaskState::InProgress)).await?;
+    let updated = get_task_by_id(conn, next_id).await?;
+    Ok(Some(updated))
+}
+
 pub async fn update_metadata(
     conn: &DatabaseConnection,
     id: i64,
@@ -208,20 +222,20 @@ pub async fn update_metadata(
     Ok(result.rows_affected())
 }
 
+pub async fn add_dependency(
+    conn: &DatabaseConnection,
+    parent_id: i64,
+    child_id: i64,
+) -> Result<(), DbErr> {
+    insert_dependency(conn, parent_id, child_id).await
+}
+
 pub async fn update_dependency(
     conn: &DatabaseConnection,
     id: i64,
-    add_parent: &[i64],
-    remove_parent: &[i64],
     add_child: &[i64],
     remove_child: &[i64],
 ) -> Result<(), DbErr> {
-    for parent in add_parent {
-        insert_dependency(conn, *parent, id).await?;
-    }
-    for parent in remove_parent {
-        delete_dependency(conn, *parent, id).await?;
-    }
     for child in add_child {
         insert_dependency(conn, id, *child).await?;
     }
@@ -490,7 +504,7 @@ mod tests {
             .await
             .expect("add child");
 
-        update_dependency(&conn, child.id, &[parent.id], &[], &[], &[])
+        add_dependency(&conn, parent.id, child.id)
             .await
             .expect("add dependency");
 
@@ -505,5 +519,28 @@ mod tests {
         let tasks = list_tasks(&conn, &[]).await.expect("list");
         let child_row = find_task(&tasks, child.id);
         assert_eq!(child_row.state, "ready");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn claim_next_picks_highest_priority_ready() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db_path = temp.path().join("pearls.db");
+        let conn = conn::connect(&db_path).await.expect("connect");
+
+        let low = add_task(&conn, "low", "p2", Some(2)).await.expect("add low");
+        let high = add_task(&conn, "high", "p1", Some(1)).await.expect("add high");
+        let tied = add_task(&conn, "tied", "p1", Some(1))
+            .await
+            .expect("add tied");
+
+        let first = claim_next(&conn).await.expect("claim first");
+        assert_eq!(first.as_ref().map(|task| task.id), Some(high.id));
+        assert_eq!(first.as_ref().map(|task| task.state.as_str()), Some("in_progress"));
+
+        let second = claim_next(&conn).await.expect("claim second");
+        assert_eq!(second.as_ref().map(|task| task.id), Some(tied.id));
+
+        let third = claim_next(&conn).await.expect("claim third");
+        assert_eq!(third.as_ref().map(|task| task.id), Some(low.id));
     }
 }

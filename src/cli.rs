@@ -67,8 +67,8 @@ pub enum TaskSubcommand {
         )]
         state: Vec<TaskState>,
     },
-    /// List ready tasks
-    Ready,
+    /// Claim the highest-priority ready task and mark it in progress
+    ClaimNext,
     /// Add a task with a given title, description, and optional priority, parent, and child
     Add {
         #[arg(long, value_name = "TITLE", help = "Task title")]
@@ -107,14 +107,10 @@ pub enum TaskSubcommand {
         #[arg(long, value_name = "STATE", help = "New state (optional)")]
         state: Option<TaskState>,
     },
-    /// Update dependency relationships for a given task ID
+    /// Update child dependency relationships for a given task ID
     UpdateDependency {
         #[arg(long, value_name = "ID", help = "Task id to update")]
         id: u64,
-        #[arg(long, value_name = "PARENT_ID", action = ArgAction::Append, help = "Add parent dependency (repeatable)")]
-        add_parent: Vec<u64>,
-        #[arg(long, value_name = "PARENT_ID", action = ArgAction::Append, help = "Remove parent dependency (repeatable)")]
-        remove_parent: Vec<u64>,
         #[arg(long, value_name = "CHILD_ID", action = ArgAction::Append, help = "Add child dependency (repeatable)")]
         add_child: Vec<u64>,
         #[arg(long, value_name = "CHILD_ID", action = ArgAction::Append, help = "Remove child dependency (repeatable)")]
