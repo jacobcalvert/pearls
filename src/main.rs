@@ -1,5 +1,6 @@
 mod cli;
 mod db;
+mod mcp;
 
 use clap::Parser;
 use filelock::FileLock;
@@ -210,6 +211,13 @@ async fn main() {
                         }
                     },
                     Err(err) => eprintln!("failed to update dependencies: {err}"),
+                }
+            }
+        },
+        cli::Commands::Mcp(mcp_cmd) => match &mcp_cmd.command {
+            cli::McpSubcommand::Serve => {
+                if let Err(err) = mcp::serve_stdio(db_path).await {
+                    eprintln!("mcp server error: {err}");
                 }
             }
         },

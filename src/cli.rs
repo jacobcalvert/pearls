@@ -46,6 +46,7 @@ impl Cli {
 #[derive(Debug, Subcommand)]
 pub enum Commands {
     Tasks(TasksCommand),
+    Mcp(McpCommand),
 }
 
 #[derive(Debug, Parser)]
@@ -116,6 +117,18 @@ pub enum TaskSubcommand {
         #[arg(long, value_name = "CHILD_ID", action = ArgAction::Append, help = "Remove child dependency (repeatable)")]
         remove_child: Vec<u64>,
     },
+}
+
+#[derive(Debug, Parser)]
+pub struct McpCommand {
+    #[command(subcommand)]
+    pub command: McpSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum McpSubcommand {
+    /// Run the MCP server over stdio
+    Serve,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
