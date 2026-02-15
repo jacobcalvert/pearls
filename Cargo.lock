@@ -469,9 +469,9 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "filelock"
-version = "0.4.2"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17efe98b8841031a325d5b463380e3f38ea34b2c3f0afaeb6edf4cd2d6f6f194"
+checksum = "063ef5495a0425ee115600d0fa87f360791d8c729faffecc4c1d8335ea4158a7"
 dependencies = [
  "errno",
  "libc",

@@ -16,7 +16,6 @@ async fn main() {
     let command = cli.command();
     let json_output = cli.json();
     let lock_path = db_path.with_extension("lock");
-    let lock_path = lock_path.to_string_lossy().to_string();
     let mut lock = FileLock::new(&lock_path);
 
     match command {
