@@ -46,12 +46,25 @@ impl Cli {
 #[derive(Debug, Subcommand)]
 pub enum Commands {
     Tasks(TasksCommand),
+    Agent(AgentCommand),
 }
 
 #[derive(Debug, Parser)]
 pub struct TasksCommand {
     #[command(subcommand)]
     pub command: TaskSubcommand,
+}
+
+#[derive(Debug, Parser)]
+pub struct AgentCommand {
+    #[command(subcommand)]
+    pub command: AgentSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AgentSubcommand {
+    /// Print AGENTS.md instructions snippet for Pearls
+    Instructions,
 }
 
 #[derive(Debug, Subcommand)]
