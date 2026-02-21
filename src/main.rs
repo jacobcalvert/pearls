@@ -29,7 +29,6 @@ async fn main() {
                 .await
                 .unwrap_or_else(|err| panic!("failed to open db at {}: {err}", db_path.display()));
             let lock_path = db_path.with_extension("lock");
-            let lock_path = lock_path.to_string_lossy().to_string();
             let mut lock = FileLock::new(&lock_path);
 
             match &tasks.command {
