@@ -149,17 +149,7 @@ pub async fn list_tasks(
     let ids: Vec<i64> = tasks.iter().map(|task| task.id).collect();
     populate_dependencies(conn, &ids, &mut tasks).await?;
 
-    if states.is_empty() {
-        return Ok(tasks);
-    }
-
-    let allowed: HashSet<&'static str> = states.iter().map(TaskState::as_str).collect();
-    let filtered = tasks
-        .into_iter()
-        .filter(|task| allowed.contains(task.state.as_str()))
-        .collect();
-
-    Ok(filtered)
+    Ok(filter_tasks_by_states(tasks, states))
 }
 
 pub async fn list_tasks_paginated(
@@ -177,17 +167,7 @@ pub async fn list_tasks_paginated(
             (Task::Table, Task::Priority),
             (Task::Table, Task::State),
         ])
-        .from(Task::Table)
-        .offset(offset)
-        .limit(limit);
-
-    if !states.is_empty() {
-        let allowed: Vec<SimpleExpr> = states
-            .iter()
-            .map(|state| Expr::val(state.as_str()).into())
-            .collect();
-        query.and_where(Expr::col((Task::Table, Task::State)).is_in(allowed));
-    }
+        .from(Task::Table);
 
     let (sql, values) = query.build(SqliteQueryBuilder);
     let rows: Vec<QueryResult> = conn
@@ -213,7 +193,12 @@ pub async fn list_tasks_paginated(
 
     let ids: Vec<i64> = tasks.iter().map(|task| task.id).collect();
     populate_dependencies(conn, &ids, &mut tasks).await?;
-    Ok(tasks)
+    let filtered = filter_tasks_by_states(tasks, states);
+
+    let offset = offset.min(usize::MAX as u64) as usize;
+    let limit = limit.min(usize::MAX as u64) as usize;
+
+    Ok(filtered.into_iter().skip(offset).take(limit).collect())
 }
 
 pub async fn claim_next(conn: &DatabaseConnection) -> Result<Option<TaskRow>, DbErr> {
@@ -401,6 +386,18 @@ fn format_ids(values: &[i64]) -> String {
     }
 }
 
+fn filter_tasks_by_states(tasks: Vec<TaskRow>, states: &[TaskState]) -> Vec<TaskRow> {
+    if states.is_empty() {
+        return tasks;
+    }
+
+    let allowed: HashSet<&'static str> = states.iter().map(TaskState::as_str).collect();
+    tasks
+        .into_iter()
+        .filter(|task| allowed.contains(task.state.as_str()))
+        .collect()
+}
+
 async fn populate_dependencies(
     conn: &DatabaseConnection,
     ids: &[i64],
@@ -543,6 +540,31 @@ mod tests {
 
         let all = list_tasks(&conn, &[]).await.expect("list all");
         assert_eq!(all.len(), 2);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn list_tasks_paginated_excludes_dependency_blocked_rows_from_ready_filter() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db_path = temp.path().join("pearls.db");
+        let conn = conn::connect(&db_path).await.expect("connect");
+
+        let parent = add_task(&conn, "parent", "p", None)
+            .await
+            .expect("add parent");
+        let child = add_task(&conn, "child", "c", None)
+            .await
+            .expect("add child");
+
+        add_dependency(&conn, parent.id, child.id)
+            .await
+            .expect("add dependency");
+
+        let ready = list_tasks_paginated(&conn, &[TaskState::Ready], 0, 20)
+            .await
+            .expect("list ready");
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].id, parent.id);
+        assert_eq!(ready[0].state, "ready");
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -1,5 +1,59 @@
 use std::process::Command;
 
+const AGENT_INSTRUCTIONS: &str = r#"## Work Tracking Instructions
+### Overview
+Pearls is a lightweight CLI for managing a task graph. Pearls tasks can be assigned parents, children, and priorities. Parent tasks block child tasks and must be completed and closed before child tasks are ready to be worked.
+Database path defaults to ./pearls.db and can be overridden with PEARLS_DB.
+Use --json on any command to emit machine-readable output.
+
+Commands:
+- pearls tasks list [--state ready,blocked,in_progress,closed]
+- pearls tasks claim-next
+- pearls tasks add --title <title> --description <desc> [--parent-of <id>] [--child-of <id>] [--priority <num>]
+- pearls tasks update-metadata --id <id> [--title <title>] [--desc <desc>] [--priority <num>] [--state <state>]
+- pearls tasks update-dependency --id <id> [--add-child <id> ...] [--remove-child <id> ...]
+
+### Workflow
+- claim the next ready task with `pearls tasks claim-next`
+- when done, close the task with `pearls tasks update-metadata`
+- if any new subtasks need to be created as a result of working your in progress task, create them with `pearls tasks add` and make sure to set their dependencies appropriately
+"#;
+
+#[test]
+fn agent_instructions_outputs_expected_text() {
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("pearls"));
+    cmd.args(["agent", "instructions"]);
+    let output = cmd.output().expect("run agent instructions");
+    if !output.status.success() {
+        panic!(
+            "agent instructions failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        AGENT_INSTRUCTIONS
+    );
+}
+
+#[test]
+fn agent_instructions_supports_json_output() {
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("pearls"));
+    cmd.args(["--json", "agent", "instructions"]);
+    let output = cmd.output().expect("run json agent instructions");
+    if !output.status.success() {
+        panic!(
+            "json agent instructions failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let payload: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("json output");
+    assert_eq!(payload["instructions"], AGENT_INSTRUCTIONS);
+}
+
 #[test]
 fn json_output_for_add_and_list() {
     let temp = tempfile::tempdir().expect("tempdir");

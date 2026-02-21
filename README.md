@@ -30,19 +30,25 @@ mv pearls /usr/local/bin/pearls
 
 ## Intended Use
 
-- Add the usage snippet to your `AGENTS.md` so your agent(s) know how to use Pearls.
+- Generate the usage snippet with `pearls agent instructions` and add it to your `AGENTS.md`.
 - Store the database somewhere convenient (configurable via `PEARLS_DB`).
 - Load your task graph.
 - Turn your agent(s) loose.
 
 ## AGENTS.md Snippet
 
-Add this to your `AGENTS.md` file:
+Print the snippet with:
+
+```bash
+pearls agent instructions
+```
+
+Expected output:
 
 ```text
 ## Work Tracking Instructions
 ### Overview
-Pearls is a lightweight CLI for managing a task graph.
+Pearls is a lightweight CLI for managing a task graph. Pearls tasks can be assigned parents, children, and priorities. Parent tasks block child tasks and must be completed and closed before child tasks are ready to be worked.
 Database path defaults to ./pearls.db and can be overridden with PEARLS_DB.
 Use --json on any command to emit machine-readable output.
 
@@ -56,8 +62,7 @@ Commands:
 ### Workflow
 - claim the next ready task with `pearls tasks claim-next`
 - when done, close the task with `pearls tasks update-metadata`
-    - YOU MUST ALWAYS CLOSE THE TASK AT THE END OF YOUR SESSION
-- if any new subtask need to be created as a result of working your in progress task, create them with `pearls tasks add`
+- if any new subtasks need to be created as a result of working your in progress task, create them with `pearls tasks add` and make sure to set their dependencies appropriately
 ```
 
 ## Behavior Notes
