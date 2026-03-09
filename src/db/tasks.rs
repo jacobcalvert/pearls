@@ -16,6 +16,7 @@ enum Task {
     Desc,
     Priority,
     State,
+    Assignee,
 }
 
 #[derive(Iden)]
@@ -30,6 +31,7 @@ pub async fn add_task(
     title: &str,
     description: &str,
     priority: Option<i64>,
+    assignee: Option<&str>,
 ) -> Result<TaskRow, DbErr> {
     let mut insert = InsertStatement::new();
     let mut columns: Vec<Task> = vec![Task::Title, Task::Desc];
@@ -37,6 +39,10 @@ pub async fn add_task(
     if let Some(priority) = priority {
         columns.push(Task::Priority);
         values.push(Expr::val(priority).into());
+    }
+    if let Some(assignee) = assignee {
+        columns.push(Task::Assignee);
+        values.push(Expr::val(assignee).into());
     }
     insert
         .into_table(Task::Table)
@@ -75,6 +81,7 @@ pub async fn get_task_by_id(conn: &DatabaseConnection, id: i64) -> Result<TaskRo
             (Task::Table, Task::Desc),
             (Task::Table, Task::Priority),
             (Task::Table, Task::State),
+            (Task::Table, Task::Assignee),
         ])
         .from(Task::Table)
         .and_where(Expr::col((Task::Table, Task::Id)).eq(id))
@@ -96,6 +103,7 @@ pub async fn get_task_by_id(conn: &DatabaseConnection, id: i64) -> Result<TaskRo
         desc: row.try_get_by_index(2)?,
         priority: row.try_get_by_index(3)?,
         state: row.try_get_by_index(4)?,
+        assignee: row.try_get_by_index(5)?,
         parents: Vec::new(),
         children: Vec::new(),
     };
@@ -121,6 +129,7 @@ pub async fn list_tasks(
             (Task::Table, Task::Desc),
             (Task::Table, Task::Priority),
             (Task::Table, Task::State),
+            (Task::Table, Task::Assignee),
         ])
         .from(Task::Table);
 
@@ -141,6 +150,7 @@ pub async fn list_tasks(
             desc: row.try_get_by_index(2)?,
             priority: row.try_get_by_index(3)?,
             state: row.try_get_by_index(4)?,
+            assignee: row.try_get_by_index(5)?,
             parents: Vec::new(),
             children: Vec::new(),
         });
@@ -166,6 +176,7 @@ pub async fn list_tasks_paginated(
             (Task::Table, Task::Desc),
             (Task::Table, Task::Priority),
             (Task::Table, Task::State),
+            (Task::Table, Task::Assignee),
         ])
         .from(Task::Table);
 
@@ -186,6 +197,7 @@ pub async fn list_tasks_paginated(
             desc: row.try_get_by_index(2)?,
             priority: row.try_get_by_index(3)?,
             state: row.try_get_by_index(4)?,
+            assignee: row.try_get_by_index(5)?,
             parents: Vec::new(),
             children: Vec::new(),
         });
@@ -201,7 +213,10 @@ pub async fn list_tasks_paginated(
     Ok(filtered.into_iter().skip(offset).take(limit).collect())
 }
 
-pub async fn claim_next(conn: &DatabaseConnection) -> Result<Option<TaskRow>, DbErr> {
+pub async fn claim_next(
+    conn: &DatabaseConnection,
+    assignee: Option<&str>,
+) -> Result<Option<TaskRow>, DbErr> {
     let mut ready = list_tasks(conn, &[TaskState::Ready]).await?;
     if ready.is_empty() {
         return Ok(None);
@@ -210,11 +225,22 @@ pub async fn claim_next(conn: &DatabaseConnection) -> Result<Option<TaskRow>, Db
     ready.sort_by_key(|task| (task.priority, task.id));
     let next_id = ready[0].id;
 
-    update_metadata(conn, next_id, None, None, None, Some(TaskState::InProgress)).await?;
+    update_metadata(
+        conn,
+        next_id,
+        None,
+        None,
+        None,
+        Some(TaskState::InProgress),
+        assignee,
+        false,
+    )
+    .await?;
     let updated = get_task_by_id(conn, next_id).await?;
     Ok(Some(updated))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn update_metadata(
     conn: &DatabaseConnection,
     id: i64,
@@ -222,6 +248,8 @@ pub async fn update_metadata(
     desc: Option<&str>,
     priority: Option<i64>,
     state: Option<TaskState>,
+    assignee: Option<&str>,
+    no_assignee: bool,
 ) -> Result<u64, DbErr> {
     let mut update = sea_query::UpdateStatement::new();
     update
@@ -243,6 +271,14 @@ pub async fn update_metadata(
     }
     if let Some(state) = state {
         update.value(Task::State, state.as_str());
+        changes += 1;
+    }
+    if let Some(assignee) = assignee {
+        update.value(Task::Assignee, assignee);
+        changes += 1;
+    }
+    if no_assignee {
+        update.value(Task::Assignee, Option::<String>::None);
         changes += 1;
     }
 
@@ -339,6 +375,7 @@ pub struct TaskRow {
     pub desc: Option<String>,
     pub priority: i64,
     pub state: String,
+    pub assignee: Option<String>,
     pub parents: Vec<i64>,
     pub children: Vec<i64>,
 }
@@ -347,15 +384,17 @@ impl TaskRow {
     pub fn display_line(&self) -> String {
         let title = self.title.as_deref().unwrap_or("");
         let desc = self.desc.as_deref().unwrap_or("");
+        let assignee = self.assignee.as_deref().unwrap_or("no assignee");
         let parents = format_ids(&self.parents);
         let children = format_ids(&self.children);
         format!(
-            "#{id} [{state}] p{priority} {title} - {desc} parents={parents} children={children}",
+            "#{id} [{state}] p{priority} {title} - {desc} assignee={assignee} parents={parents} children={children}",
             id = self.id,
             state = self.state,
             priority = self.priority,
             title = title,
             desc = desc,
+            assignee = assignee,
             parents = parents,
             children = children
         )
@@ -524,13 +563,24 @@ mod tests {
         let db_path = temp.path().join("pearls.db");
         let conn = conn::connect(&db_path).await.expect("connect");
 
-        let t1 = add_task(&conn, "one", "first", None).await.expect("add t1");
-        let t2 = add_task(&conn, "two", "second", None)
+        let t1 = add_task(&conn, "one", "first", None, None)
+            .await
+            .expect("add t1");
+        let t2 = add_task(&conn, "two", "second", None, None)
             .await
             .expect("add t2");
-        update_metadata(&conn, t2.id, None, None, None, Some(TaskState::InProgress))
-            .await
-            .expect("update state");
+        update_metadata(
+            &conn,
+            t2.id,
+            None,
+            None,
+            None,
+            Some(TaskState::InProgress),
+            None,
+            false,
+        )
+        .await
+        .expect("update state");
 
         let ready = list_tasks(&conn, &[TaskState::Ready])
             .await
@@ -548,10 +598,10 @@ mod tests {
         let db_path = temp.path().join("pearls.db");
         let conn = conn::connect(&db_path).await.expect("connect");
 
-        let parent = add_task(&conn, "parent", "p", None)
+        let parent = add_task(&conn, "parent", "p", None, None)
             .await
             .expect("add parent");
-        let child = add_task(&conn, "child", "c", None)
+        let child = add_task(&conn, "child", "c", None, None)
             .await
             .expect("add child");
 
@@ -573,10 +623,10 @@ mod tests {
         let db_path = temp.path().join("pearls.db");
         let conn = conn::connect(&db_path).await.expect("connect");
 
-        let parent = add_task(&conn, "parent", "p", None)
+        let parent = add_task(&conn, "parent", "p", None, None)
             .await
             .expect("add parent");
-        let child = add_task(&conn, "child", "c", None)
+        let child = add_task(&conn, "child", "c", None, None)
             .await
             .expect("add child");
 
@@ -588,9 +638,18 @@ mod tests {
         let child_row = find_task(&tasks, child.id);
         assert_eq!(child_row.state, "blocked");
 
-        update_metadata(&conn, parent.id, None, None, None, Some(TaskState::Closed))
-            .await
-            .expect("close parent");
+        update_metadata(
+            &conn,
+            parent.id,
+            None,
+            None,
+            None,
+            Some(TaskState::Closed),
+            None,
+            false,
+        )
+        .await
+        .expect("close parent");
 
         let tasks = list_tasks(&conn, &[]).await.expect("list");
         let child_row = find_task(&tasks, child.id);
@@ -603,20 +662,68 @@ mod tests {
         let db_path = temp.path().join("pearls.db");
         let conn = conn::connect(&db_path).await.expect("connect");
 
-        let low = add_task(&conn, "low", "p2", Some(2)).await.expect("add low");
-        let high = add_task(&conn, "high", "p1", Some(1)).await.expect("add high");
-        let tied = add_task(&conn, "tied", "p1", Some(1))
+        let low = add_task(&conn, "low", "p2", Some(2), None)
+            .await
+            .expect("add low");
+        let high = add_task(&conn, "high", "p1", Some(1), None)
+            .await
+            .expect("add high");
+        let tied = add_task(&conn, "tied", "p1", Some(1), None)
             .await
             .expect("add tied");
 
-        let first = claim_next(&conn).await.expect("claim first");
+        let first = claim_next(&conn, None).await.expect("claim first");
         assert_eq!(first.as_ref().map(|task| task.id), Some(high.id));
-        assert_eq!(first.as_ref().map(|task| task.state.as_str()), Some("in_progress"));
+        assert_eq!(
+            first.as_ref().map(|task| task.state.as_str()),
+            Some("in_progress")
+        );
 
-        let second = claim_next(&conn).await.expect("claim second");
+        let second = claim_next(&conn, None).await.expect("claim second");
         assert_eq!(second.as_ref().map(|task| task.id), Some(tied.id));
 
-        let third = claim_next(&conn).await.expect("claim third");
+        let third = claim_next(&conn, None).await.expect("claim third");
         assert_eq!(third.as_ref().map(|task| task.id), Some(low.id));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn claim_next_sets_assignee() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db_path = temp.path().join("pearls.db");
+        let conn = conn::connect(&db_path).await.expect("connect");
+
+        add_task(&conn, "task", "desc", None, None)
+            .await
+            .expect("add task");
+
+        let claimed = claim_next(&conn, Some("alice")).await.expect("claim next");
+        assert_eq!(
+            claimed.and_then(|task| task.assignee),
+            Some("alice".to_string())
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn update_metadata_can_set_and_clear_assignee() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let db_path = temp.path().join("pearls.db");
+        let conn = conn::connect(&db_path).await.expect("connect");
+
+        let task = add_task(&conn, "task", "desc", None, Some("alice"))
+            .await
+            .expect("add task");
+        assert_eq!(task.assignee.as_deref(), Some("alice"));
+
+        update_metadata(&conn, task.id, None, None, None, None, Some("bob"), false)
+            .await
+            .expect("assign task");
+        let updated = get_task_by_id(&conn, task.id).await.expect("load updated");
+        assert_eq!(updated.assignee.as_deref(), Some("bob"));
+
+        update_metadata(&conn, task.id, None, None, None, None, None, true)
+            .await
+            .expect("clear assignee");
+        let cleared = get_task_by_id(&conn, task.id).await.expect("load cleared");
+        assert_eq!(cleared.assignee, None);
     }
 }

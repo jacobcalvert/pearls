@@ -8,9 +8,9 @@ Use --json on any command to emit machine-readable output.
 
 Commands:
 - pearls tasks list [--state ready,blocked,in_progress,closed]
-- pearls tasks claim-next
-- pearls tasks add --title <title> --description <desc> [--parent-of <id>] [--child-of <id>] [--priority <num>]
-- pearls tasks update-metadata --id <id> [--title <title>] [--desc <desc>] [--priority <num>] [--state <state>]
+- pearls tasks claim-next [--assignee <ASSIGNEE>]
+- pearls tasks add --title <title> --description <desc> [--assignee <ASSIGNEE>] [--parent-of <id>] [--child-of <id>] [--priority <num>]
+- pearls tasks update-metadata --id <id> [--title <title>] [--desc <desc>] [--priority <num>] [--state <state>] [--assignee <ASSIGNEE>] [--no-assignee]
 - pearls tasks update-dependency --id <id> [--add-child <id> ...] [--remove-child <id> ...]
 
 ### Workflow
@@ -31,10 +31,7 @@ fn agent_instructions_outputs_expected_text() {
         );
     }
 
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        AGENT_INSTRUCTIONS
-    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), AGENT_INSTRUCTIONS);
 }
 
 #[test]
@@ -49,8 +46,7 @@ fn agent_instructions_supports_json_output() {
         );
     }
 
-    let payload: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("json output");
+    let payload: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json output");
     assert_eq!(payload["instructions"], AGENT_INSTRUCTIONS);
 }
 
@@ -73,15 +69,12 @@ fn json_output_for_add_and_list() {
     ]);
     let output = add.output().expect("run add");
     if !output.status.success() {
-        panic!(
-            "add failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        panic!("add failed: {}", String::from_utf8_lossy(&output.stderr));
     }
-    let add_payload: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("json add");
+    let add_payload: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json add");
     assert_eq!(add_payload["title"], "First");
     assert_eq!(add_payload["desc"], "Test task");
+    assert!(add_payload["assignee"].is_null());
 
     let mut list = Command::new(assert_cmd::cargo::cargo_bin!("pearls"));
     list.args([
@@ -95,14 +88,51 @@ fn json_output_for_add_and_list() {
     ]);
     let output = list.output().expect("run list");
     if !output.status.success() {
-        panic!(
-            "list failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        panic!("list failed: {}", String::from_utf8_lossy(&output.stderr));
     }
     let list_payload: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("json list");
     assert_eq!(list_payload.as_array().map(|arr| arr.len()), Some(1));
+    assert!(list_payload[0]["assignee"].is_null());
+}
+
+#[test]
+fn human_list_shows_no_assignee_when_unassigned() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let db_path = temp.path().join("pearls.db");
+
+    let mut add = Command::new(assert_cmd::cargo::cargo_bin!("pearls"));
+    add.args([
+        "--db",
+        db_path.to_str().expect("db path"),
+        "tasks",
+        "add",
+        "--title",
+        "First",
+        "--description",
+        "Test task",
+    ]);
+    let output = add.output().expect("run add");
+    if !output.status.success() {
+        panic!("add failed: {}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    let mut list = Command::new(assert_cmd::cargo::cargo_bin!("pearls"));
+    list.args([
+        "--db",
+        db_path.to_str().expect("db path"),
+        "tasks",
+        "list",
+        "--state",
+        "ready",
+    ]);
+    let output = list.output().expect("run list");
+    if !output.status.success() {
+        panic!("list failed: {}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("assignee=no assignee"));
 }
 
 #[test]
@@ -167,10 +197,7 @@ fn claim_next_selects_ready_task_and_updates_state() {
     ]);
     let output = claim.output().expect("run claim");
     if !output.status.success() {
-        panic!(
-            "claim failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        panic!("claim failed: {}", String::from_utf8_lossy(&output.stderr));
     }
     let claim_payload: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("json claim");

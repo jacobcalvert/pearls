@@ -95,13 +95,26 @@ pub enum TaskSubcommand {
         limit: u64,
     },
     /// Claim the highest-priority ready task and mark it in progress
-    ClaimNext,
+    ClaimNext {
+        #[arg(
+            long,
+            value_name = "ASSIGNEE",
+            help = "Assignee/claimer for the claimed task (optional)"
+        )]
+        assignee: Option<String>,
+    },
     /// Add a task with a given title, description, and optional priority, parent, and child
     Add {
         #[arg(long, value_name = "TITLE", help = "Task title")]
         title: String,
         #[arg(long, value_name = "DESC", help = "Task description")]
         description: String,
+        #[arg(
+            long,
+            value_name = "ASSIGNEE",
+            help = "Assignee for this task (optional)"
+        )]
+        assignee: Option<String>,
         #[arg(
             long,
             value_name = "OTHER_ID",
@@ -133,6 +146,19 @@ pub enum TaskSubcommand {
         priority: Option<i64>,
         #[arg(long, value_name = "STATE", help = "New state (optional)")]
         state: Option<TaskState>,
+        #[arg(
+            long,
+            value_name = "ASSIGNEE",
+            conflicts_with = "no_assignee",
+            help = "Assignee for this task (optional)"
+        )]
+        assignee: Option<String>,
+        #[arg(
+            long,
+            action = ArgAction::SetTrue,
+            help = "Clear the assignee on this task"
+        )]
+        no_assignee: bool,
     },
     /// Update child dependency relationships for a given task ID
     UpdateDependency {

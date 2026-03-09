@@ -36,23 +36,21 @@ async fn main() {
                     state,
                     offset,
                     limit,
-                } => {
-                    match db::tasks::list_tasks_paginated(&conn, state, *offset, *limit).await {
-                        Ok(rows) => {
-                            if json_output {
-                                print_json(&rows);
-                            } else {
-                                for row in rows {
-                                    println!("{}", row.display_line());
-                                }
+                } => match db::tasks::list_tasks_paginated(&conn, state, *offset, *limit).await {
+                    Ok(rows) => {
+                        if json_output {
+                            print_json(&rows);
+                        } else {
+                            for row in rows {
+                                println!("{}", row.display_line());
                             }
                         }
-                        Err(err) => {
-                            eprintln!("failed to list tasks: {err}");
-                        }
                     }
-                }
-                cli::TaskSubcommand::ClaimNext => {
+                    Err(err) => {
+                        eprintln!("failed to list tasks: {err}");
+                    }
+                },
+                cli::TaskSubcommand::ClaimNext { assignee } => {
                     let _guard = match lock.lock() {
                         Ok(guard) => guard,
                         Err(err) => {
@@ -61,7 +59,7 @@ async fn main() {
                         }
                     };
 
-                    match db::tasks::claim_next(&conn).await {
+                    match db::tasks::claim_next(&conn, assignee.as_deref()).await {
                         Ok(Some(task)) => {
                             if json_output {
                                 print_json(&task);
@@ -84,6 +82,7 @@ async fn main() {
                 cli::TaskSubcommand::Add {
                     title,
                     description,
+                    assignee,
                     parent_of,
                     child_of,
                     priority,
@@ -96,14 +95,21 @@ async fn main() {
                         }
                     };
 
-                    let task =
-                        match db::tasks::add_task(&conn, title, description, *priority).await {
-                            Ok(task) => task,
-                            Err(err) => {
-                                eprintln!("failed to add task: {err}");
-                                return;
-                            }
-                        };
+                    let task = match db::tasks::add_task(
+                        &conn,
+                        title,
+                        description,
+                        *priority,
+                        assignee.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok(task) => task,
+                        Err(err) => {
+                            eprintln!("failed to add task: {err}");
+                            return;
+                        }
+                    };
 
                     let mut dep_errors = Vec::new();
                     if let Some(other) = *parent_of
@@ -146,6 +152,8 @@ async fn main() {
                     desc,
                     priority,
                     state,
+                    assignee,
+                    no_assignee,
                 } => {
                     let _guard = match lock.lock() {
                         Ok(guard) => guard,
@@ -162,6 +170,8 @@ async fn main() {
                         desc.as_deref(),
                         *priority,
                         *state,
+                        assignee.as_deref(),
+                        *no_assignee,
                     )
                     .await
                     {
@@ -205,13 +215,8 @@ async fn main() {
                     let add_child: Vec<i64> = add_child.iter().map(|v| *v as i64).collect();
                     let remove_child: Vec<i64> = remove_child.iter().map(|v| *v as i64).collect();
 
-                    match db::tasks::update_dependency(
-                        &conn,
-                        *id as i64,
-                        &add_child,
-                        &remove_child,
-                    )
-                    .await
+                    match db::tasks::update_dependency(&conn, *id as i64, &add_child, &remove_child)
+                        .await
                     {
                         Ok(()) => match db::tasks::get_task_by_id(&conn, *id as i64).await {
                             Ok(task) => {

@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use sea_orm_migration::MigratorTrait;
-use sea_orm_migration::sea_orm::{Database, DatabaseConnection, DbErr};
+use sea_orm_migration::prelude::ConnectionTrait;
+use sea_orm_migration::sea_orm::{Database, DatabaseConnection, DbBackend, DbErr, Statement};
 
 use crate::db::migration::Migrator;
 
@@ -27,5 +28,36 @@ pub async fn connect(path: &Path) -> Result<DatabaseConnection, DbErr> {
     }
     let conn = Database::connect(&url).await?;
     Migrator::up(&conn, None).await?;
+    ensure_assignee_column(&conn).await?;
     Ok(conn)
+}
+
+async fn ensure_assignee_column(conn: &DatabaseConnection) -> Result<(), DbErr> {
+    let rows = conn
+        .query_all(Statement::from_string(
+            DbBackend::Sqlite,
+            "PRAGMA table_info(task)".to_owned(),
+        ))
+        .await?;
+
+    let mut has_assignee = false;
+    for row in rows {
+        let name: String = row.try_get_by_index::<String>(1)?;
+        if name == "assignee" {
+            has_assignee = true;
+            break;
+        }
+    }
+
+    if has_assignee {
+        return Ok(());
+    }
+
+    conn.execute(Statement::from_string(
+        DbBackend::Sqlite,
+        "ALTER TABLE task ADD COLUMN assignee TEXT".to_owned(),
+    ))
+    .await?;
+
+    Ok(())
 }
