@@ -1,11 +1,13 @@
 mod agent;
 mod cli;
 mod db;
+mod monitor;
 
 use clap::Parser;
 use filelock::FileLock;
 use serde::Serialize;
 use serde_json::json;
+use std::time::Duration;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -23,6 +25,27 @@ async fn main() {
                 }
             }
         },
+        cli::Commands::Monitor(monitor) => {
+            let db_path = cli.db_path();
+            let conn = db::conn::connect(&db_path)
+                .await
+                .unwrap_or_else(|err| panic!("failed to open db at {}: {err}", db_path.display()));
+
+            match &monitor.command {
+                cli::MonitorSubcommand::Web { host, port } => {
+                    if let Err(err) = monitor::run_web(conn.clone(), host.clone(), *port).await {
+                        eprintln!("failed to run web monitor: {err}");
+                    }
+                }
+                cli::MonitorSubcommand::Tui { refresh_interval } => {
+                    if let Err(err) =
+                        monitor::run_tui(conn.clone(), Duration::from_secs(*refresh_interval)).await
+                    {
+                        eprintln!("failed to run tui monitor: {err}");
+                    }
+                }
+            }
+        }
         cli::Commands::Tasks(tasks) => {
             let db_path = cli.db_path();
             let conn = db::conn::connect(&db_path)

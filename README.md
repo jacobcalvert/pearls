@@ -72,6 +72,49 @@ Commands:
 - `tasks list` defaults to `ready,blocked,in_progress` and accepts a comma-separated `--state` list (include `closed` explicitly if you want it).
 - Writes (`add`, `update-metadata`, `update-dependency`) take an exclusive file lock. Reads do not.
 
+## Monitor Modes
+
+Pearls now includes two monitoring modes to visualize task status.
+
+- `monitor tui`: Terminal dashboard with four columns (`ready`, `blocked`, `in_progress`, `closed`), refreshed periodically.
+- `monitor web`: Browser dashboard served from an embedded page, including a light/dark toggle.
+
+Examples:
+
+```bash
+# Start web monitor on localhost:9187 (defaults)
+pearls monitor web
+
+# Override host and port
+pearls monitor web --host 0.0.0.0 --port 3000
+
+# Start terminal monitor with 5-second refresh interval (default)
+pearls monitor tui
+
+# Use a shorter terminal refresh interval
+pearls monitor tui --refresh-interval 2
+```
+
+Notes:
+
+- Both monitor modes read directly from the database and organize tasks by state.
+- The terminal mode responds to `q`/`Esc` to quit and `r` to refresh immediately.
+- The web mode polls for updates periodically and serves the UI from `/`.
+
+## Screenshots
+
+### Terminal monitor
+
+![Pearls monitor in TUI mode](images/monitor-tui.png)
+
+### Web monitor
+
+![Pearls monitor in web mode](images/monitor-web.png)
+
+### Task details modal in web monitor
+
+![Task modal with full context in web monitor](images/web-monitor-task-card.png)
+
 ## Configuration
 
 - `PEARLS_DB`: optional path to the SQLite database. If unset, it defaults to `./pearls.db`.

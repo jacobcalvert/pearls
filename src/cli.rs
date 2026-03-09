@@ -47,6 +47,7 @@ impl Cli {
 pub enum Commands {
     Tasks(TasksCommand),
     Agent(AgentCommand),
+    Monitor(MonitorCommand),
 }
 
 #[derive(Debug, Parser)]
@@ -61,10 +62,47 @@ pub struct AgentCommand {
     pub command: AgentSubcommand,
 }
 
+#[derive(Debug, Parser)]
+pub struct MonitorCommand {
+    #[command(subcommand)]
+    pub command: MonitorSubcommand,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum AgentSubcommand {
     /// Print AGENTS.md instructions snippet for Pearls
     Instructions,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MonitorSubcommand {
+    /// Start the web monitor endpoint
+    Web {
+        #[arg(
+            long,
+            value_name = "HOST",
+            default_value = "127.0.0.1",
+            help = "Host to bind the web monitor"
+        )]
+        host: String,
+        #[arg(
+            long,
+            value_name = "PORT",
+            default_value_t = 9187,
+            help = "Port to bind the web monitor"
+        )]
+        port: u16,
+    },
+    /// Start a terminal UI monitor
+    Tui {
+        #[arg(
+            long,
+            value_name = "SECONDS",
+            default_value_t = 5,
+            help = "Refresh interval for terminal monitor"
+        )]
+        refresh_interval: u64,
+    },
 }
 
 #[derive(Debug, Subcommand)]
