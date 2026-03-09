@@ -47,6 +47,7 @@ impl Cli {
 pub enum Commands {
     Tasks(TasksCommand),
     Agent(AgentCommand),
+    Monitor(MonitorCommand),
 }
 
 #[derive(Debug, Parser)]
@@ -61,10 +62,47 @@ pub struct AgentCommand {
     pub command: AgentSubcommand,
 }
 
+#[derive(Debug, Parser)]
+pub struct MonitorCommand {
+    #[command(subcommand)]
+    pub command: MonitorSubcommand,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum AgentSubcommand {
     /// Print AGENTS.md instructions snippet for Pearls
     Instructions,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MonitorSubcommand {
+    /// Start the web monitor endpoint
+    Web {
+        #[arg(
+            long,
+            value_name = "HOST",
+            default_value = "127.0.0.1",
+            help = "Host to bind the web monitor"
+        )]
+        host: String,
+        #[arg(
+            long,
+            value_name = "PORT",
+            default_value_t = 9187,
+            help = "Port to bind the web monitor"
+        )]
+        port: u16,
+    },
+    /// Start a terminal UI monitor
+    Tui {
+        #[arg(
+            long,
+            value_name = "SECONDS",
+            default_value_t = 5,
+            help = "Refresh interval for terminal monitor"
+        )]
+        refresh_interval: u64,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -95,13 +133,26 @@ pub enum TaskSubcommand {
         limit: u64,
     },
     /// Claim the highest-priority ready task and mark it in progress
-    ClaimNext,
+    ClaimNext {
+        #[arg(
+            long,
+            value_name = "ASSIGNEE",
+            help = "Assignee/claimer for the claimed task (optional)"
+        )]
+        assignee: Option<String>,
+    },
     /// Add a task with a given title, description, and optional priority, parent, and child
     Add {
         #[arg(long, value_name = "TITLE", help = "Task title")]
         title: String,
         #[arg(long, value_name = "DESC", help = "Task description")]
         description: String,
+        #[arg(
+            long,
+            value_name = "ASSIGNEE",
+            help = "Assignee for this task (optional)"
+        )]
+        assignee: Option<String>,
         #[arg(
             long,
             value_name = "OTHER_ID",
@@ -133,6 +184,19 @@ pub enum TaskSubcommand {
         priority: Option<i64>,
         #[arg(long, value_name = "STATE", help = "New state (optional)")]
         state: Option<TaskState>,
+        #[arg(
+            long,
+            value_name = "ASSIGNEE",
+            conflicts_with = "no_assignee",
+            help = "Assignee for this task (optional)"
+        )]
+        assignee: Option<String>,
+        #[arg(
+            long,
+            action = ArgAction::SetTrue,
+            help = "Clear the assignee on this task"
+        )]
+        no_assignee: bool,
     },
     /// Update child dependency relationships for a given task ID
     UpdateDependency {

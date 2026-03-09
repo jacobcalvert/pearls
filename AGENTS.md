@@ -7,9 +7,9 @@ Use --json on any command to emit machine-readable output.
 
 Commands:
 - pearls tasks list [--state ready,blocked,in_progress,closed]
-- pearls tasks claim-next
-- pearls tasks add --title <title> --description <desc> [--parent-of <id>] [--child-of <id>] [--priority <num>]
-- pearls tasks update-metadata --id <id> [--title <title>] [--desc <desc>] [--priority <num>] [--state <state>]
+- pearls tasks claim-next [--assignee <ASSIGNEE>]
+- pearls tasks add --title <title> --description <desc> [--assignee <ASSIGNEE>] [--parent-of <id>] [--child-of <id>] [--priority <num>]
+- pearls tasks update-metadata --id <id> [--title <title>] [--desc <desc>] [--priority <num>] [--state <state>] [--assignee <ASSIGNEE>] [--no-assignee]
 - pearls tasks update-dependency --id <id> [--add-child <id> ...] [--remove-child <id> ...]
 
 ### Workflow

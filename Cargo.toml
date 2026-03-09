@@ -1,6 +1,6 @@
 [package]
 name = "pearls"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "A lightweight CLI for managing long-running task graphs for coding agents."
 readme = "README.md"
@@ -17,6 +17,10 @@ sea-orm-migration = { version = "1.1.10", features = [
     "runtime-tokio-rustls",
     "sqlx-sqlite",
 ] }
+crossterm = "0.29.0"
+ratatui = "0.29.0"
+axum = "0.8.4"
+chrono = "0.4.42"
 sea-query = { version = "0.32.0", features = ["backend-sqlite"] }
 tokio = { version = "1.36.0", features = ["macros", "rt-multi-thread"] }
 filelock = "0.5.0"
