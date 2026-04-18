@@ -1,4 +1,3 @@
-use std::fmt::Write as FmtWrite;
 use std::io;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -20,10 +19,10 @@ use eyre::Result;
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
 use serde::Serialize;
 
@@ -537,6 +536,11 @@ struct WebMonitorState {
 #[derive(Debug)]
 struct BoardState {
     columns: [Vec<tasks::TaskRow>; 4],
+    column_states: [ListState; 4],
+    active_column: usize,
+    focused_task_id: Option<i64>,
+    modal_task: Option<tasks::TaskRow>,
+    modal_scroll: u16,
     status: String,
     refreshed_at: String,
 }
@@ -559,6 +563,11 @@ impl Default for BoardState {
     fn default() -> Self {
         Self {
             columns: Default::default(),
+            column_states: std::array::from_fn(|_| ListState::default()),
+            active_column: 0,
+            focused_task_id: None,
+            modal_task: None,
+            modal_scroll: 0,
             status: "waiting for first refresh...".to_string(),
             refreshed_at: "never".to_string(),
         }
@@ -589,11 +598,191 @@ impl BoardState {
         self.columns = columns;
         self.refreshed_at = now_string();
         self.status = format!("refreshed {} task(s)", self.total_count());
+        self.reconcile_selection_after_refresh();
         Ok(())
     }
 
     fn total_count(&self) -> usize {
         self.columns.iter().map(std::vec::Vec::len).sum()
+    }
+
+    fn task_position(&self, task_id: i64) -> Option<(usize, usize)> {
+        for (column_index, column) in self.columns.iter().enumerate() {
+            if let Some(row_index) = column.iter().position(|task| task.id == task_id) {
+                return Some((column_index, row_index));
+            }
+        }
+        None
+    }
+
+    fn selected_task(&self, column: usize) -> Option<&tasks::TaskRow> {
+        let row = self.column_states.get(column)?.selected()?;
+        self.columns.get(column)?.get(row)
+    }
+
+    fn active_task(&self) -> Option<&tasks::TaskRow> {
+        self.selected_task(self.active_column)
+    }
+
+    fn focus_task(&mut self, column: usize, row: usize) {
+        if column >= self.columns.len() {
+            return;
+        }
+
+        self.active_column = column;
+        let tasks = &self.columns[column];
+        if tasks.is_empty() {
+            self.column_states[column].select(None);
+            *self.column_states[column].offset_mut() = 0;
+            self.focused_task_id = None;
+            return;
+        }
+
+        let row = row.min(tasks.len().saturating_sub(1));
+        let task_id = tasks[row].id;
+        self.column_states[column].select(Some(row));
+        self.focused_task_id = Some(task_id);
+    }
+
+    fn move_row(&mut self, delta: isize) {
+        let column = self.active_column;
+        let len = self.columns[column].len();
+        if len == 0 {
+            self.column_states[column].select(None);
+            *self.column_states[column].offset_mut() = 0;
+            self.focused_task_id = None;
+            return;
+        }
+
+        let next = match self.column_states[column].selected() {
+            Some(current) if delta >= 0 => current.saturating_add(delta as usize),
+            Some(current) => current.saturating_sub(delta.unsigned_abs()),
+            None if delta >= 0 => 0,
+            None => len.saturating_sub(1),
+        };
+
+        self.focus_task(column, next.min(len.saturating_sub(1)));
+    }
+
+    fn move_column(&mut self, delta: isize) {
+        let column_count = self.columns.len();
+        if column_count == 0 || delta == 0 {
+            return;
+        }
+
+        let step = delta.unsigned_abs() % column_count;
+        if step == 0 {
+            return;
+        }
+
+        let next_column = if delta > 0 {
+            (self.active_column + step) % column_count
+        } else {
+            (self.active_column + column_count - step) % column_count
+        };
+
+        let preferred_row = self.column_states[next_column]
+            .selected()
+            .or_else(|| self.column_states[self.active_column].selected())
+            .unwrap_or(0);
+
+        if self.columns[next_column].is_empty() {
+            self.active_column = next_column;
+            self.column_states[next_column].select(None);
+            *self.column_states[next_column].offset_mut() = 0;
+            self.focused_task_id = None;
+            return;
+        }
+
+        self.focus_task(next_column, preferred_row);
+    }
+
+    fn select_first_in_active_column(&mut self) {
+        if !self.columns[self.active_column].is_empty() {
+            self.focus_task(self.active_column, 0);
+        }
+    }
+
+    fn select_last_in_active_column(&mut self) {
+        let len = self.columns[self.active_column].len();
+        if len > 0 {
+            self.focus_task(self.active_column, len - 1);
+        }
+    }
+
+    fn open_modal_for_active_task(&mut self) {
+        if let Some(task) = self.active_task().cloned() {
+            self.modal_scroll = 0;
+            self.modal_task = Some(task);
+        }
+    }
+
+    fn close_modal(&mut self) {
+        self.modal_task = None;
+        self.modal_scroll = 0;
+    }
+
+    fn scroll_modal_up(&mut self, amount: u16) {
+        if self.modal_task.is_some() {
+            self.modal_scroll = self.modal_scroll.saturating_sub(amount);
+        }
+    }
+
+    fn scroll_modal_down(&mut self, amount: u16) {
+        if self.modal_task.is_some() {
+            self.modal_scroll = self.modal_scroll.saturating_add(amount);
+        }
+    }
+
+    fn focus_summary(&self) -> String {
+        let column = MONITOR_STATES[self.active_column];
+        match self.active_task() {
+            Some(task) => format!("focus: {column} column, task #{}", task.id),
+            None => format!("focus: {column} column, no task selected"),
+        }
+    }
+
+    fn controls_summary(&self) -> String {
+        if self.modal_task.is_some() {
+            "modal: esc close | j/k or arrows scroll | pgup/pgdn fast scroll".to_string()
+        } else {
+            "controls: arrows or hjkl move | tab/backtab columns | enter/space details | r refresh | q quit"
+                .to_string()
+        }
+    }
+
+    fn reconcile_selection_after_refresh(&mut self) {
+        for (column_index, column) in self.columns.iter().enumerate() {
+            let state = &mut self.column_states[column_index];
+            if column.is_empty() {
+                state.select(None);
+                *state.offset_mut() = 0;
+            } else if let Some(selected) = state.selected() {
+                state.select(Some(selected.min(column.len().saturating_sub(1))));
+            }
+        }
+
+        if let Some(task_id) = self.focused_task_id
+            && let Some((column, row)) = self.task_position(task_id)
+        {
+            self.focus_task(column, row);
+            return;
+        }
+
+        if !self.columns[self.active_column].is_empty() {
+            let row = self.column_states[self.active_column]
+                .selected()
+                .unwrap_or(0)
+                .min(self.columns[self.active_column].len().saturating_sub(1));
+            self.focus_task(self.active_column, row);
+            return;
+        }
+
+        if self.columns[self.active_column].is_empty() {
+            self.column_states[self.active_column].select(None);
+            *self.column_states[self.active_column].offset_mut() = 0;
+            self.focused_task_id = None;
+        }
     }
 }
 
@@ -671,9 +860,7 @@ fn state_color(state: &str) -> Color {
 }
 
 fn render_column_title(state: &str, count: usize) -> String {
-    let mut title = String::new();
-    let _ = write!(title, "{state} ({count})");
-    title
+    format!("{state} ({count})")
 }
 
 fn task_line(task: &tasks::TaskRow) -> ListItem<'_> {
@@ -699,18 +886,100 @@ fn task_line(task: &tasks::TaskRow) -> ListItem<'_> {
     ListItem::new(line)
 }
 
-fn render_board(f: &mut Frame, state: &BoardState) {
+fn format_task_ids(values: &[i64]) -> String {
+    if values.is_empty() {
+        "None".to_string()
+    } else {
+        values
+            .iter()
+            .map(|value| format!("#{value}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+fn task_detail_fields(task: &tasks::TaskRow) -> [(&'static str, String); 8] {
+    [
+        ("ID", format!("#{}", task.id)),
+        ("State", task.state.clone()),
+        ("Priority", task.priority.to_string()),
+        (
+            "Assignee",
+            task.assignee
+                .as_deref()
+                .unwrap_or("no assignee")
+                .to_string(),
+        ),
+        (
+            "Title",
+            task.title.as_deref().unwrap_or("(no title)").to_string(),
+        ),
+        (
+            "Description",
+            task.desc
+                .as_deref()
+                .unwrap_or("(no description)")
+                .to_string(),
+        ),
+        ("Parents", format_task_ids(&task.parents)),
+        ("Children", format_task_ids(&task.children)),
+    ]
+}
+
+fn task_detail_lines(task: &tasks::TaskRow) -> Vec<Line<'static>> {
+    let fields = task_detail_fields(task);
+    let last_field = fields.len().saturating_sub(1);
+    let mut lines = Vec::with_capacity(fields.len() * 3);
+
+    for (index, (label, value)) in fields.into_iter().enumerate() {
+        lines.push(Line::from(Span::styled(
+            label,
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        for part in value.split('\n') {
+            lines.push(Line::from(part.to_string()));
+        }
+
+        if index != last_field {
+            lines.push(Line::from(""));
+        }
+    }
+
+    lines
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(vertical[1])[1]
+}
+
+fn render_board(f: &mut Frame, state: &mut BoardState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints(vec![
-            Constraint::Length(1),
+        .constraints([
+            Constraint::Length(3),
             Constraint::Min(1),
-            Constraint::Length(5),
+            Constraint::Length(6),
         ])
         .split(f.area());
 
-    let header = Paragraph::new("Pearls Monitor: TUI (press q or Esc to quit)")
-        .block(Block::default().borders(Borders::ALL));
+    let header =
+        Paragraph::new("Pearls Monitor: TUI").block(Block::default().borders(Borders::ALL));
     f.render_widget(header, chunks[0]);
 
     let columns = Layout::default()
@@ -737,22 +1006,77 @@ fn render_board(f: &mut Frame, state: &BoardState) {
                 Style::default().fg(Color::DarkGray),
             ))));
         }
-        let list = List::new(task_lines).block(Block::default().borders(Borders::ALL).title(
-            Span::styled(
-                title,
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
-            ),
-        ));
-        f.render_widget(list, columns[index]);
+        let list = List::new(task_lines)
+            .highlight_symbol("> ")
+            .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+            .block(
+                Block::default().borders(Borders::ALL).title(Span::styled(
+                    title,
+                    Style::default()
+                        .fg(color)
+                        .add_modifier(Modifier::BOLD)
+                        .add_modifier(if index == state.active_column {
+                            Modifier::REVERSED
+                        } else {
+                            Modifier::empty()
+                        }),
+                )),
+            );
+
+        let mut list_state = state.column_states[index].clone();
+        if index != state.active_column {
+            *list_state.selected_mut() = None;
+        }
+
+        f.render_stateful_widget(list, columns[index], &mut list_state);
+
+        if index == state.active_column {
+            state.column_states[index] = list_state;
+        } else {
+            *state.column_states[index].offset_mut() = list_state.offset();
+        }
     }
 
     let footer_lines = vec![
         Line::from(format!("refreshed: {}", state.refreshed_at)),
-        Line::from("press q to quit"),
         Line::from(format!("status: {}", state.status)),
+        Line::from(state.focus_summary()),
+        Line::from(state.controls_summary()),
     ];
     let footer = Paragraph::new(footer_lines).block(Block::default().borders(Borders::ALL));
     f.render_widget(footer, chunks[2]);
+
+    if let Some(task) = state.modal_task.as_ref() {
+        render_task_modal(f, task, state.modal_scroll);
+    }
+}
+
+fn render_task_modal(f: &mut Frame, task: &tasks::TaskRow, scroll: u16) {
+    let modal_area = centered_rect(90, 85, f.area());
+    f.render_widget(Clear, modal_area);
+
+    let block = Block::default().borders(Borders::ALL).title(Span::styled(
+        "Task details",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ));
+    let inner = block.inner(modal_area);
+    f.render_widget(block, modal_area);
+
+    let modal_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    let body = Paragraph::new(task_detail_lines(task))
+        .wrap(Wrap { trim: false })
+        .scroll((scroll, 0));
+    f.render_widget(body, modal_chunks[0]);
+
+    let hint = Paragraph::new("Esc close | j/k or arrows scroll | PgUp/PgDn fast scroll")
+        .style(Style::default().fg(Color::DarkGray));
+    f.render_widget(hint, modal_chunks[1]);
 }
 
 async fn index_page() -> Html<&'static str> {
@@ -794,17 +1118,63 @@ pub async fn run_tui(
             }
 
             terminal.draw(|frame| {
-                render_board(frame, &state);
+                render_board(frame, &mut state);
             })?;
 
             if event::poll(Duration::from_millis(200))?
                 && let Event::Key(event) = event::read()?
             {
                 match event.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break,
+                    KeyCode::Char('q') => break,
+                    KeyCode::Esc => {
+                        if state.modal_task.is_some() {
+                            state.close_modal();
+                        } else {
+                            break;
+                        }
+                    }
                     KeyCode::Char('r') => {
                         state.set_status("manual refresh requested".to_string());
                         last_refresh = Instant::now() - refresh_interval;
+                    }
+                    KeyCode::Char('j') | KeyCode::Down if state.modal_task.is_some() => {
+                        state.scroll_modal_down(1);
+                    }
+                    KeyCode::Char('k') | KeyCode::Up if state.modal_task.is_some() => {
+                        state.scroll_modal_up(1);
+                    }
+                    KeyCode::PageDown if state.modal_task.is_some() => {
+                        state.scroll_modal_down(5);
+                    }
+                    KeyCode::PageUp if state.modal_task.is_some() => {
+                        state.scroll_modal_up(5);
+                    }
+                    KeyCode::Char('h') | KeyCode::Left if state.modal_task.is_none() => {
+                        state.move_column(-1);
+                    }
+                    KeyCode::Char('l') | KeyCode::Right if state.modal_task.is_none() => {
+                        state.move_column(1);
+                    }
+                    KeyCode::BackTab if state.modal_task.is_none() => {
+                        state.move_column(-1);
+                    }
+                    KeyCode::Tab if state.modal_task.is_none() => {
+                        state.move_column(1);
+                    }
+                    KeyCode::Char('j') | KeyCode::Down if state.modal_task.is_none() => {
+                        state.move_row(1);
+                    }
+                    KeyCode::Char('k') | KeyCode::Up if state.modal_task.is_none() => {
+                        state.move_row(-1);
+                    }
+                    KeyCode::Home | KeyCode::Char('g') if state.modal_task.is_none() => {
+                        state.select_first_in_active_column();
+                    }
+                    KeyCode::End | KeyCode::Char('G') if state.modal_task.is_none() => {
+                        state.select_last_in_active_column();
+                    }
+                    KeyCode::Enter | KeyCode::Char(' ') if state.modal_task.is_none() => {
+                        state.open_modal_for_active_task();
                     }
                     _ => {}
                 }
@@ -836,4 +1206,92 @@ pub async fn run_web(
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn task(id: i64, state: &str) -> tasks::TaskRow {
+        tasks::TaskRow {
+            id,
+            title: Some(format!("Task {id}")),
+            desc: Some(format!("Description {id}")),
+            priority: id,
+            state: state.to_string(),
+            assignee: Some("alice".to_string()),
+            parents: vec![1, 2],
+            children: vec![3, 4],
+        }
+    }
+
+    #[test]
+    fn task_detail_fields_match_web_modal_content() {
+        let task = task(42, "blocked");
+        let fields = task_detail_fields(&task);
+
+        assert_eq!(fields[0], ("ID", "#42".to_string()));
+        assert_eq!(fields[1], ("State", "blocked".to_string()));
+        assert_eq!(fields[2], ("Priority", "42".to_string()));
+        assert_eq!(fields[3], ("Assignee", "alice".to_string()));
+        assert_eq!(fields[4], ("Title", "Task 42".to_string()));
+        assert_eq!(fields[5], ("Description", "Description 42".to_string()));
+        assert_eq!(fields[6], ("Parents", "#1, #2".to_string()));
+        assert_eq!(fields[7], ("Children", "#3, #4".to_string()));
+    }
+
+    #[test]
+    fn refresh_keeps_focus_on_the_same_task_when_it_moves_columns() {
+        let mut state = BoardState {
+            columns: [
+                vec![task(1, "ready"), task(2, "ready")],
+                vec![task(3, "blocked")],
+                Default::default(),
+                Default::default(),
+            ],
+            ..Default::default()
+        };
+        state.focus_task(0, 1);
+
+        state.columns = [
+            vec![task(1, "ready")],
+            vec![task(3, "blocked"), task(2, "blocked")],
+            Default::default(),
+            Default::default(),
+        ];
+
+        state.reconcile_selection_after_refresh();
+
+        assert_eq!(state.active_column, 1);
+        assert_eq!(state.focused_task_id, Some(2));
+        assert_eq!(state.active_task().map(|task| task.id), Some(2));
+        assert_eq!(state.column_states[1].selected(), Some(1));
+    }
+
+    #[test]
+    fn refresh_keeps_the_active_column_when_it_is_empty() {
+        let mut state = BoardState {
+            columns: [
+                vec![task(1, "ready")],
+                vec![task(2, "blocked")],
+                Default::default(),
+                Default::default(),
+            ],
+            ..Default::default()
+        };
+        state.focus_task(1, 0);
+
+        state.columns = [
+            vec![task(1, "ready")],
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        ];
+
+        state.reconcile_selection_after_refresh();
+
+        assert_eq!(state.active_column, 1);
+        assert_eq!(state.focused_task_id, None);
+        assert_eq!(state.column_states[1].selected(), None);
+    }
 }

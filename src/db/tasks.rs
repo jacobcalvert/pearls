@@ -368,7 +368,7 @@ async fn delete_dependency(
     Ok(())
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TaskRow {
     pub id: i64,
     pub title: Option<String>,
